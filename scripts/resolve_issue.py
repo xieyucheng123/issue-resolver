@@ -91,8 +91,21 @@ def main():
     print(f"Commit before: {commit_before[:12]}")
     print(f"Git status before: {subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True).stdout}")
 
-    # Build prompt — tell agent NOT to use git
-    task_prompt = f"""You are a software engineer working on the repository: {repo_name}
+    # Check if user confirmed the plan in comments
+    user_confirmed = any(
+        c["user"]["login"] != "xieyucheng123" and  # not the bot
+        ("confirm" in c["body"].lower() or "确认" in c["body"] or "approved" in c["body"].lower())
+        for c in comments
+    )
+    # Also check if bot already posted a plan
+    bot_posted_plan = any(
+        "📋 Plan" in c.get("body", "")
+        for c in comments
+    )
+
+    if not bot_posted_plan:
+        # Phase 1: Generate plan, ask for confirmation
+        task_prompt = f"""You are a software engineer working on the repository: {repo_name}
 
 ## Issue to Resolve
 **Title**: {title}
@@ -101,12 +114,49 @@ def main():
 {comments_text}
 
 ## Your Task
-1. Explore the codebase to understand the project structure (use ls, cat, find)
-2. Identify the root cause or what needs to be implemented
-3. Make the necessary code changes to resolve this issue
-4. Run the tests to verify your changes work
-5. If tests fail, analyze the errors and fix your changes — iterate until tests pass
-6. Ensure code quality and follow existing code style
+1. Explore the codebase to understand the project structure (use ls, cat, find, grep)
+2. Analyze what needs to be done to resolve this issue
+3. Generate a clear implementation plan
+
+## Output Format
+Output your plan in this exact format:
+
+📋 Plan:
+1. [step 1]
+2. [step 2]
+3. [step 3]
+...
+
+❓ Questions (if anything is unclear):
+- [question 1]
+- [question 2]
+
+If you have questions, I will ask the user and come back. If no questions, the plan will be submitted for confirmation.
+
+Do NOT write any code yet. Just explore and plan.
+"""
+    elif not user_confirmed:
+        # Plan posted but not confirmed yet — wait
+        print("Plan posted, waiting for user confirmation")
+        gh_api("POST", f"{repo_name}/issues/{issue_number}/comments", github_token,
+               {"body": "⏳ Waiting for confirmation. Reply with 'confirm' or '确认' to proceed."})
+        sys.exit(0)
+    else:
+        # Phase 2: User confirmed, implement
+        task_prompt = f"""You are a software engineer working on the repository: {repo_name}
+
+## Issue to Resolve
+**Title**: {title}
+**Description**:
+{body}
+{comments_text}
+
+## Your Task
+The user has confirmed the plan above. Now implement it:
+1. Make the necessary code changes
+2. Run the tests to verify your changes work
+3. If tests fail, analyze the errors and fix your changes — iterate until tests pass
+4. Ensure code quality and follow existing code style
 
 ## Important
 - Make minimal, focused changes
@@ -116,7 +166,7 @@ def main():
 - **DO NOT use git at all** — just create/modify files directly
 - The CI system will handle git operations automatically
 
-Start by exploring the project structure, then implement the fix, then run tests to verify.
+Start implementing now.
 """
 
     # Create agent
@@ -172,6 +222,20 @@ Start by exploring the project structure, then implement the fix, then run tests
         gh_api("POST", f"{repo_name}/issues/{issue_number}/comments", github_token,
                {"body": f"❌ Agent error: {e}"})
         sys.exit(1)
+
+    # If this was the planning phase, post the plan to the issue
+    if not bot_posted_plan:
+        # Extract agent's response from conversation
+        from openhands.sdk.conversation.response_utils import get_agent_final_response
+        try:
+            plan_response = get_agent_final_response(conversation)
+        except Exception:
+            plan_response = "Plan generated. Please review the workflow logs."
+        
+        gh_api("POST", f"{repo_name}/issues/{issue_number}/comments", github_token,
+               {"body": f"📋 **Implementation Plan**\n\n{plan_response}\n\n---\nReply with `confirm` or `确认` to proceed, or provide feedback."})
+        print("Plan posted to issue, waiting for confirmation")
+        sys.exit(0)
 
     # Check state after agent
     commit_after = subprocess.run(
