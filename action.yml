@@ -34,30 +34,30 @@ inputs:
         required: false
         default: '50'
     extensions-repo:
-        description: GitHub repository for extensions (owner/repo)
+        description: GitHub repository for issue-resolver plugin (owner/repo)
         required: false
-        default: OpenHands/extensions
+        default: xieyucheng123/issue-resolver
     extensions-version:
-        description: Git ref to use for extensions
+        description: Git ref to use for issue-resolver plugin
         required: false
         default: main
 
 runs:
     using: composite
     steps:
-        - name: Checkout extensions repository
-          uses: actions/checkout@v4
-          with:
-              repository: ${{ inputs.extensions-repo }}
-              ref: ${{ inputs.extensions-version }}
-              path: extensions
-
         - name: Checkout target repository
           uses: actions/checkout@v4
           with:
               fetch-depth: 0
               persist-credentials: true
               path: target-repo
+
+        - name: Checkout issue-resolver plugin
+          uses: actions/checkout@v4
+          with:
+              repository: ${{ inputs.extensions-repo }}
+              ref: ${{ inputs.extensions-version }}
+              path: issue-resolver-plugin
 
         - name: Set up Python
           uses: actions/setup-python@v5
@@ -95,7 +95,7 @@ runs:
           run: |
               cd target-repo
               uv run --no-project --with openhands-sdk --with openhands-tools \
-                python ../extensions/plugins/issue-resolver/scripts/resolve_issue.py
+                python ../issue-resolver-plugin/scripts/resolve_issue.py
 
         - name: Upload logs
           uses: actions/upload-artifact@v4
