@@ -11,7 +11,7 @@ inputs:
     llm-model:
         description: LLM model to use
         required: false
-        default: glm-5.2
+        default: openai/glm-5.2
     llm-base-url:
         description: LLM base URL
         required: false
@@ -53,6 +53,11 @@ runs:
           with:
               python-version: '3.12'
 
+        - name: Install uv
+          uses: astral-sh/setup-uv@v6
+          with:
+              enable-cache: true
+
         - name: Configure Git
           shell: bash
           run: |
@@ -71,4 +76,14 @@ runs:
               ISSUE_TYPE: ${{ inputs.issue-type }}
               REPO_NAME: ${{ github.repository }}
           run: |
-              python ../issue-resolver-plugin/scripts/resolve_issue.py
+              uv run --no-project --with openhands-sdk --with openhands-tools \
+                python ../issue-resolver-plugin/scripts/resolve_issue.py
+
+        - name: Upload logs
+          uses: actions/upload-artifact@v4
+          if: always()
+          with:
+              name: issue-resolver-logs
+              path: target-repo/*.log
+              retention-days: 7
+              if-no-files-found: ignore
