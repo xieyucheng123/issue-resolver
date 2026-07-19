@@ -1,0 +1,109 @@
+---
+name: OpenHands Issue Resolver
+description: Automatically resolve GitHub issues by creating PRs with fixes using OpenHands agents
+author: xieyucheng123
+
+branding:
+    icon: wrench
+    color: blue
+
+inputs:
+    llm-model:
+        description: LLM model to use for issue resolution.
+        required: false
+        default: openai/glm-5.2
+    llm-base-url:
+        description: LLM base URL for custom LLM endpoints
+        required: false
+        default: 'https://api.modelarts-maas.com/v2'
+    llm-api-key:
+        description: LLM API key (required)
+        required: true
+    github-token:
+        description: GitHub token for API access and creating PRs (required)
+        required: true
+    issue-number:
+        description: Issue number to resolve
+        required: true
+    issue-type:
+        description: 'issue or pr'
+        required: false
+        default: 'issue'
+    max-iterations:
+        description: Maximum number of agent iterations
+        required: false
+        default: '50'
+    extensions-repo:
+        description: GitHub repository for extensions (owner/repo)
+        required: false
+        default: OpenHands/extensions
+    extensions-version:
+        description: Git ref to use for extensions
+        required: false
+        default: main
+
+runs:
+    using: composite
+    steps:
+        - name: Checkout extensions repository
+          uses: actions/checkout@v4
+          with:
+              repository: ${{ inputs.extensions-repo }}
+              ref: ${{ inputs.extensions-version }}
+              path: extensions
+
+        - name: Checkout target repository
+          uses: actions/checkout@v4
+          with:
+              fetch-depth: 0
+              persist-credentials: true
+              path: target-repo
+
+        - name: Set up Python
+          uses: actions/setup-python@v5
+          with:
+              python-version: '3.12'
+
+        - name: Install uv
+          uses: astral-sh/setup-uv@v6
+          with:
+              enable-cache: true
+
+        - name: Install system dependencies
+          shell: bash
+          run: |
+              sudo apt-get update
+              sudo apt-get install -y gh tmux
+
+        - name: Configure Git
+          shell: bash
+          run: |
+              git config --global user.name "openhands-bot"
+              git config --global user.email "bot@openhands.dev"
+
+        - name: Run Issue Resolver
+          shell: bash
+          env:
+              LLM_MODEL: ${{ inputs.llm-model }}
+              LLM_BASE_URL: ${{ inputs.llm-base-url }}
+              LLM_API_KEY: ${{ inputs.llm-api-key }}
+              GITHUB_TOKEN: ${{ inputs.github-token }}
+              ISSUE_NUMBER: ${{ inputs.issue-number }}
+              ISSUE_TYPE: ${{ inputs.issue-type }}
+              MAX_ITERATIONS: ${{ inputs.max-iterations }}
+              REPO_NAME: ${{ github.repository }}
+          run: |
+              cd target-repo
+              uv run --no-project --with openhands-sdk --with openhands-tools \
+                python ../extensions/plugins/issue-resolver/scripts/resolve_issue.py
+
+        - name: Upload logs
+          uses: actions/upload-artifact@v4
+          if: always()
+          with:
+              name: issue-resolver-logs
+              path: |
+                  target-repo/*.log
+                  target-repo/output/
+              retention-days: 7
+              if-no-files-found: ignore
