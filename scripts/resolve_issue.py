@@ -93,18 +93,14 @@ def main():
 
     # Check if user confirmed the plan in comments
     user_confirmed = any(
-        c["user"]["login"] != "xieyucheng123" and  # not the bot
+        c["user"]["login"] != "xieyucheng123" and
         ("confirm" in c["body"].lower() or "确认" in c["body"] or "approved" in c["body"].lower())
         for c in comments
     )
-    # Also check if bot already posted a plan
-    bot_posted_plan = any(
-        "📋 Plan" in c.get("body", "")
-        for c in comments
-    )
+    bot_posted_plan = any("📋 Plan" in c.get("body", "") for c in comments)
 
     if not bot_posted_plan:
-        # Phase 1: Generate plan, ask for confirmation
+        # Phase 1: Agent assesses confidence and either plans or implements directly
         task_prompt = f"""You are a software engineer working on the repository: {repo_name}
 
 ## Issue to Resolve
@@ -113,30 +109,36 @@ def main():
 {body}
 {comments_text}
 
-## Your Task
-1. Explore the codebase to understand the project structure (use ls, cat, find, grep)
-2. Analyze what needs to be done to resolve this issue
-3. Generate a clear implementation plan
+## Workflow
+1. Explore the codebase to understand the project structure
+2. Assess your confidence: Are you 100% sure what to do and how to do it?
 
-## Output Format
-Output your plan in this exact format:
+### If 100% confident (simple, clear issue):
+- Directly implement the fix
+- Run tests to verify
+- Do NOT post a plan, just do it
+
+### If NOT 100% confident (complex, ambiguous, needs design):
+- Output your plan and questions in this format:
 
 📋 Plan:
 1. [step 1]
 2. [step 2]
-3. [step 3]
 ...
 
-❓ Questions (if anything is unclear):
+❓ Questions:
 - [question 1]
 - [question 2]
 
-If you have questions, I will ask the user and come back. If no questions, the plan will be submitted for confirmation.
+- Do NOT write any code yet
+- I will ask the user to confirm
 
-Do NOT write any code yet. Just explore and plan.
+## Important
+- **DO NOT run any git commands** — just create/modify files directly
+- Make minimal, focused changes
+- Follow existing code conventions
 """
     elif not user_confirmed:
-        # Plan posted but not confirmed yet — wait
         print("Plan posted, waiting for user confirmation")
         gh_api("POST", f"{repo_name}/issues/{issue_number}/comments", github_token,
                {"body": "⏳ Waiting for confirmation. Reply with 'confirm' or '确认' to proceed."})
@@ -152,19 +154,15 @@ Do NOT write any code yet. Just explore and plan.
 {comments_text}
 
 ## Your Task
-The user has confirmed the plan above. Now implement it:
+The user has confirmed the plan. Now implement it:
 1. Make the necessary code changes
-2. Run the tests to verify your changes work
-3. If tests fail, analyze the errors and fix your changes — iterate until tests pass
-4. Ensure code quality and follow existing code style
+2. Run tests to verify
+3. If tests fail, fix and iterate
 
 ## Important
+- **DO NOT run any git commands** — just create/modify files directly
 - Make minimal, focused changes
 - Follow existing code conventions
-- Don't break existing functionality
-- **DO NOT run any git commands** (git add, git commit, git checkout, git push, etc.)
-- **DO NOT use git at all** — just create/modify files directly
-- The CI system will handle git operations automatically
 
 Start implementing now.
 """
@@ -223,19 +221,27 @@ Start implementing now.
                {"body": f"❌ Agent error: {e}"})
         sys.exit(1)
 
-    # If this was the planning phase, post the plan to the issue
+    # If this was the planning phase, check if agent wrote code or just planned
     if not bot_posted_plan:
-        # Extract agent's response from conversation
-        from openhands.sdk.conversation.response_utils import get_agent_final_response
-        try:
-            plan_response = get_agent_final_response(conversation)
-        except Exception:
-            plan_response = "Plan generated. Please review the workflow logs."
+        # Check if agent made any code changes
+        status_after_plan = subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True
+        ).stdout.strip()
         
-        gh_api("POST", f"{repo_name}/issues/{issue_number}/comments", github_token,
-               {"body": f"📋 **Implementation Plan**\n\n{plan_response}\n\n---\nReply with `confirm` or `确认` to proceed, or provide feedback."})
-        print("Plan posted to issue, waiting for confirmation")
-        sys.exit(0)
+        if not status_after_plan:
+            # No code changes = agent posted a plan, waiting for confirmation
+            from openhands.sdk.conversation.response_utils import get_agent_final_response
+            try:
+                plan_response = get_agent_final_response(conversation)
+            except Exception:
+                plan_response = "Plan generated. Please review the workflow logs."
+            
+            gh_api("POST", f"{repo_name}/issues/{issue_number}/comments", github_token,
+                   {"body": f"📋 **Implementation Plan**\n\n{plan_response}\n\n---\nReply with `confirm` or `确认` to proceed, or provide feedback."})
+            print("Plan posted to issue, waiting for confirmation")
+            sys.exit(0)
+        else:
+            print("Agent was confident, implemented directly (no plan needed)")
 
     # Check state after agent
     commit_after = subprocess.run(
