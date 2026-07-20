@@ -312,6 +312,14 @@ Start implementing now.
     pr_num = pr["number"]
     print(f"PR created: {pr_url}")
 
+    # Enable auto-merge (squash) so PR merges automatically when all checks pass
+    try:
+        gh_api("PUT", f"{repo_name}/pulls/{pr_num}/auto-merge", github_token,
+               {"merge_method": "squash"})
+        print(f"Auto-merge enabled for PR #{pr_num}")
+    except Exception as e:
+        print(f"Could not enable auto-merge: {e}")
+
     # Comment on issue
     emoji = "✅" if tests_ok else "⚠️"
     gh_api("POST", f"{repo_name}/issues/{issue_number}/comments", github_token,
