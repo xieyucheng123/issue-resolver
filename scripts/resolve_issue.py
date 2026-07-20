@@ -116,6 +116,12 @@ def main():
 ### If 100% confident (simple, clear issue):
 - Directly implement the fix
 - Run tests to verify
+- Self-review: run `git diff` to review all your changes. Check for:
+  - Error handling and edge cases
+  - Security issues (injection, secrets exposure)
+  - Unused imports or variables
+  - Missing pagination or bounds checking
+- Fix any issues found, then re-run tests
 - Do NOT post a plan, just do it
 
 ### If NOT 100% confident (complex, ambiguous, needs design):
@@ -158,6 +164,14 @@ The user has confirmed the plan. Now implement it:
 1. Make the necessary code changes
 2. Run tests to verify
 3. If tests fail, fix and iterate
+4. Self-review: run `git diff` to review all your changes. Check for:
+   - Error handling and edge cases
+   - Security issues (injection, secrets exposure)
+   - Unused imports or variables
+   - Naming conventions consistency
+   - Missing pagination or bounds checking
+5. Fix any issues found in self-review
+6. Re-run tests to confirm everything still passes
 
 ## Important
 - **DO NOT run any git commands** — just create/modify files directly
