@@ -404,7 +404,7 @@ Start implementing now.
         })
         print(f"DB changes detected, auto-merge NOT enabled for PR #{pr_num}")
     else:
-        import subprocess, time
+        import time
         time.sleep(5)
         result = subprocess.run(
             ["gh", "pr", "merge", str(pr_num), "--auto", "--squash",
