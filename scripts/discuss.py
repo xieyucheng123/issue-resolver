@@ -143,6 +143,65 @@ def playwright_screenshot(url: str, output_path: str = "screenshots") -> str:
         return f"Playwright error: {e}"
 
 
+def extract_llm_response(raw_output: str) -> str:
+    """Extract the LLM's final response from OpenHands SDK output.
+
+    The SDK prints lots of internal logs. We want only the assistant's
+    final message — typically the last block of Chinese text after the
+    final 'Thought:' or the last message content.
+    """
+    lines = raw_output.split("\n")
+
+    # Strategy 1: Find lines that look like the LLM's actual response
+    # (Chinese text, markdown headers, etc.) — skip system prompts, warnings, file paths
+    response_lines = []
+    in_response = False
+
+    for line in lines:
+        # Skip obvious noise
+        stripped = line.strip()
+        if not stripped:
+            if in_response:
+                response_lines.append(line)
+            continue
+
+        # Skip system prompt, warnings, file paths, debug logs
+        if any(skip in stripped for skip in [
+            "System Prompt", "<SOUL>", "<ROLE>", "<MEMORY>", "<EFFICIENCY>",
+            "UserWarning", "warnings.warn", "openhands.sdk", "openhands.tools",
+            "/home/runner/", "site-packages", "Cost calculation",
+            "import os, sys", "from openhands", "conversation.run()",
+            "conversation.send_message", "__main__", "levelname",
+            "python -c", "uv run",
+        ]):
+            in_response = False
+            continue
+
+        # Start capturing when we see Chinese text or markdown headers
+        if any(c in stripped for c in ['一、', '二、', '三、', '## ', '### ', '总结', '建议', '分析', '方案']):
+            in_response = True
+
+        if in_response:
+            response_lines.append(line)
+
+    if response_lines:
+        result = "\n".join(response_lines).strip()
+        # Limit to 5000 chars to keep discussion readable
+        if len(result) > 5000:
+            result = result[:5000] + "\n\n... (已截断)"
+        return result
+
+    # Strategy 2: Fallback — return last 3000 chars, filtered
+    meaningful = [l for l in lines if l.strip() and not any(s in l for s in [
+        "System Prompt", "Warning", "warning", "site-packages", "/home/runner/",
+        "import ", "from ", "conversation.", "levelname", "Cost calc",
+    ])]
+    result = "\n".join(meaningful[-100:]).strip()
+    if len(result) > 5000:
+        result = result[:5000] + "\n\n... (已截断)"
+    return result if result else "（LLM 回复提取失败，请查看 workflow 日志）"
+
+
 def main():
     token = os.environ.get("GITHUB_TOKEN", "")
     discussion_node_id = os.environ.get("DISCUSSION_NODE_ID", "")
@@ -277,12 +336,16 @@ conversation.run()
         cwd=os.getcwd(),
     )
 
-    output = result.stdout + "\n" + result.stderr
-    print(output)
+    raw_output = result.stdout + "\n" + result.stderr
+    print(raw_output)
+
+    # Extract LLM final response from raw output
+    # The OpenHands SDK prints the agent's messages; we want the last assistant message
+    llm_response = extract_llm_response(raw_output)
 
     # Step 5: Build reply with search and browse evidence
     reply_parts = ["## 技术方案建议\n"]
-    reply_parts.append(output)
+    reply_parts.append(llm_response)
     reply_parts.append("\n---\n### 搜索证据\n")
     reply_parts.append(f"**搜索关键词**: {search_query}\n")
     reply_parts.append(f"**搜索结果**:\n{search_results[:1000]}\n")
