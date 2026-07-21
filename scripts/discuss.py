@@ -303,38 +303,50 @@ def main():
 
     print("Sending to LLM...")
 
-    # Step 4: Call LLM
-    result = subprocess.run(
-        ["uv", "run", "--no-project",
-         "--with", "openhands-sdk",
-         "--with", "openhands-tools",
-         "python", "-c", f"""
-import os, sys
+    # Step 4: Call LLM via temp file (avoids "Argument list too long")
+    import tempfile, json
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump({
+            "model": llm_model,
+            "base_url": llm_base_url,
+            "api_key": llm_api_key,
+            "prompt": prompt,
+        }, f, ensure_ascii=False)
+        config_path = f.name
+
+    llm_script = """
+import json, sys
 from openhands.sdk import LLM, Agent, AgentContext, Conversation
 from openhands.sdk.tool import Tool
 from openhands.tools.file_editor import FileEditorTool
 from openhands.tools.terminal import TerminalTool
 
-llm = LLM(
-    model="{llm_model}",
-    base_url="{llm_base_url}",
-    api_key="{llm_api_key}",
-)
+with open(sys.argv[1]) as f:
+    cfg = json.load(f)
 
-tools = [
-    Tool(name=TerminalTool.name),
-    Tool(name=FileEditorTool.name),
-]
-
+llm = LLM(model=cfg["model"], base_url=cfg["base_url"], api_key=cfg["api_key"])
+tools = [Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)]
 agent = Agent(llm=llm, tools=tools)
 conversation = Conversation(agent=agent)
-conversation.send_message('''{prompt}''')
+conversation.send_message(cfg["prompt"])
 conversation.run()
-"""],
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write(llm_script)
+        script_path = f.name
+
+    result = subprocess.run(
+        ["uv", "run", "--no-project",
+         "--with", "openhands-sdk",
+         "--with", "openhands-tools",
+         "python", script_path, config_path],
         capture_output=True, text=True,
         env={**os.environ},
         cwd=os.getcwd(),
     )
+
+    os.unlink(config_path)
+    os.unlink(script_path)
 
     raw_output = result.stdout + "\n" + result.stderr
     print(raw_output)
