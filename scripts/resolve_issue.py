@@ -72,9 +72,8 @@ def analyze_db_risk(db_files: list[str]) -> str:
 
     counts = {'🔴 Critical': 0, '🟠 High': 0, '🟡 Medium': 0, '🟢 Safe': 0}
     for _, level, _ in findings:
-        key = level.split(' ', 1)[1] if ' ' in level else level
-        if key in counts:
-            counts[key] += 1
+        if level in counts:
+            counts[level] += 1
 
     lines = ["⚠️ Database changes detected — manual review required", ""]
     lines.append("## Changed Files")
