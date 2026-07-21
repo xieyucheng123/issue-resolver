@@ -326,8 +326,7 @@ def main():
 
     print("Sending to LLM...")
 
-    # Step 4: Call LLM via temp file (avoids "Argument list too long")
-    # The LLM script writes the final response to a separate file
+    # Step 4: Call LLM directly via litellm (no OpenHands SDK overhead)
     import tempfile, json
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         json.dump({
@@ -340,66 +339,23 @@ def main():
 
     response_path = config_path + ".response"
 
-    llm_script = f"""
-import json, sys, re
-from openhands.sdk import LLM, Agent, AgentContext, Conversation
-from openhands.sdk.tool import Tool
-from openhands.tools.file_editor import FileEditorTool
-from openhands.tools.terminal import TerminalTool
+    llm_script = """
+import json, sys
+from litellm import completion
 
 with open(sys.argv[1]) as f:
     cfg = json.load(f)
 
-llm = LLM(model=cfg["model"], base_url=cfg["base_url"], api_key=cfg["api_key"])
-tools = [Tool(name=TerminalTool.name), Tool(name=FileEditorTool.name)]
-agent = Agent(llm=llm, tools=tools)
-conversation = Conversation(agent=agent)
-conversation.send_message(cfg["prompt"])
-conversation.run()
-
-# Try multiple approaches to extract the response
-response_text = ""
-
-# Approach 1: SDK API
-try:
-    messages = conversation.get_messages()
-    for msg in reversed(messages):
-        role = getattr(msg, 'role', None) or getattr(msg, 'sender', None) or ''
-        if 'assistant' in str(role).lower():
-            response_text = getattr(msg, 'content', '') or str(msg)
-            break
-except Exception:
-    pass
-
-# Approach 2: Events
-if not response_text:
-    try:
-        events = list(conversation.get_events())
-        for evt in reversed(events):
-            msg = getattr(evt, 'message', None) or getattr(evt, 'llm_response', None)
-            if msg:
-                content = getattr(msg, 'content', None) or getattr(msg, 'text', None) or str(msg)
-                if content and len(content) > 20:
-                    response_text = content
-                    break
-    except Exception:
-        pass
-
-# Approach 3: State/history
-if not response_text:
-    try:
-        history = getattr(conversation, '_history', None) or getattr(conversation, 'history', None)
-        if history:
-            for item in reversed(history):
-                role = getattr(item, 'role', None) or getattr(item, 'sender', None) or ''
-                if 'assistant' in str(role).lower():
-                    response_text = getattr(item, 'content', '') or str(item)
-                    break
-    except Exception:
-        pass
-
+resp = completion(
+    model=cfg["model"],
+    api_base=cfg["base_url"],
+    api_key=cfg["api_key"],
+    messages=[{"role": "user", "content": cfg["prompt"]}],
+    max_tokens=4096,
+)
+text = resp.choices[0].message.content
 with open(sys.argv[2], 'w') as f:
-    f.write(response_text or "")
+    f.write(text)
 """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(llm_script)
@@ -407,8 +363,7 @@ with open(sys.argv[2], 'w') as f:
 
     result = subprocess.run(
         ["uv", "run", "--no-project",
-         "--with", "openhands-sdk",
-         "--with", "openhands-tools",
+         "--with", "litellm",
          "python", script_path, config_path, response_path],
         capture_output=True, text=True,
         env={**os.environ},
@@ -423,10 +378,9 @@ with open(sys.argv[2], 'w') as f:
         llm_response = ""
 
     if not llm_response:
-        # Fallback: extract from stdout using AI disclosure marker
         raw_output = result.stdout + "\n" + result.stderr
         print(raw_output)
-        llm_response = extract_llm_response(raw_output)
+        llm_response = "（LLM 调用失败，请查看 workflow 日志）"
     else:
         print(f"LLM response extracted ({len(llm_response)} chars)")
         if len(llm_response) > 5000:
