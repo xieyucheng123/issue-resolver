@@ -404,12 +404,18 @@ Start implementing now.
         })
         print(f"DB changes detected, auto-merge NOT enabled for PR #{pr_num}")
     else:
-        try:
-            gh_api("PUT", f"{repo_name}/pulls/{pr_num}/auto-merge", github_token,
-                   {"merge_method": "squash"})
+        import subprocess, time
+        time.sleep(5)
+        result = subprocess.run(
+            ["gh", "pr", "merge", str(pr_num), "--auto", "--squash",
+             "--repo", repo_name],
+            capture_output=True, text=True,
+            env={**os.environ, "GH_TOKEN": github_token}
+        )
+        if result.returncode == 0:
             print(f"Auto-merge enabled for PR #{pr_num}")
-        except Exception as e:
-            print(f"Could not enable auto-merge: {e}")
+        else:
+            print(f"Could not enable auto-merge: {result.stderr}")
 
     # Comment on issue
     emoji = "✅" if tests_ok else "⚠️"
