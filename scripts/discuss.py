@@ -152,7 +152,7 @@ def main():
         f.write(prompt)
         prompt_file = f.name
 
-    agent_script = """import os, sys
+    agent_script = """import os, sys, json
 from openhands.sdk import LLM, Agent, AgentContext, Conversation
 from openhands.sdk.tool import Tool
 from openhands.tools.file_editor import FileEditorTool
@@ -177,11 +177,31 @@ with open(os.environ["PROMPT_FILE"]) as f:
 
 conversation.send_message(prompt)
 conversation.run()
+
+# Extract the last assistant message from the conversation
+response_text = ""
+try:
+    messages = conversation.get_messages()
+    for msg in reversed(messages):
+        if hasattr(msg, 'role') and msg.role == 'assistant':
+            response_text = msg.content if hasattr(msg, 'content') else str(msg)
+            break
+except Exception:
+    pass
+
+if not response_text:
+    response_text = "(LLM 未返回文本回复)"
+
+with open(os.environ["RESPONSE_FILE"], 'w') as f:
+    f.write(response_text)
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(agent_script)
         script_file = f.name
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        response_file = f.name
 
     result = subprocess.run(
         ["uv", "run", "--no-project",
@@ -189,14 +209,21 @@ conversation.run()
          "--with", "openhands-tools",
          "python", script_file],
         capture_output=True, text=True,
-        env={**os.environ, "PROMPT_FILE": prompt_file},
+        env={**os.environ, "PROMPT_FILE": prompt_file, "RESPONSE_FILE": response_file},
         cwd=os.getcwd(),
     )
 
-    output = result.stdout + "\n" + result.stderr
-    print(output)
+    print(result.stdout)
+    if result.stderr:
+        print(f"[stderr] {result.stderr[:500]}", file=sys.stderr)
 
-    reply_body = f"## 技术方案建议\n\n基于讨论内容和仓库代码，以下是 AI 分析的方案建议：\n\n{output}\n\n---\n🤖 由 GLM-5.2 生成"
+    try:
+        with open(response_file) as f:
+            llm_response = f.read().strip()
+    except Exception:
+        llm_response = result.stdout.strip() or "(LLM 未返回文本回复)"
+
+    reply_body = f"## 技术方案建议\n\n{llm_response}\n\n---\n🤖 由 GLM-5.2 生成"
 
     try:
         result_gql = reply_discussion(token, discussion_node_id, reply_body)
