@@ -56,7 +56,30 @@ def reply_discussion(token: str, discussion_node_id: str, body: str):
             "body": body,
         }
     }
-    gh_graphql(token, query, variables)
+    return gh_graphql(token, query, variables)
+
+
+def get_file_tree(max_depth: int = 3) -> str:
+    """Get a file tree of the current directory, excluding noise."""
+    try:
+        result = subprocess.run(
+            ["find", ".", "-type", "f",
+             "-not", "-path", "./.git/*",
+             "-not", "-path", "./node_modules/*",
+             "-not", "-path", "./target/*",
+             "-not", "-path", "./__pycache__/*",
+             "-not", "-path", "./.next/*",
+             "-not", "-path", "./dist/*",
+             "-not", "-name", "*.pyc",
+             "-not", "-name", "*.log"],
+            capture_output=True, text=True, timeout=10,
+        )
+        files = result.stdout.strip().split("\n") if result.stdout.strip() else []
+        if len(files) > 200:
+            files = files[:200]
+        return "\n".join(files)
+    except Exception:
+        return "(无法获取文件树)"
 
 
 def main():
@@ -85,7 +108,19 @@ def main():
         f"**{c['author']['login']}**: {c['body']}" for c in comments
     ])
 
-    prompt = f"""你是一个技术架构师。请分析以下讨论内容，给出技术方案建议。
+    file_tree = get_file_tree()
+    print(f"File tree: {len(file_tree.split(chr(10)))} files")
+
+    prompt = f"""你是一个技术架构师。请分析以下讨论内容，结合仓库实际代码，给出技术方案建议。
+
+## 仓库信息
+- 仓库: {repo_name}
+- 当前工作目录包含完整代码，你可以使用 FileEditor 工具查看文件内容，使用 Terminal 工具运行命令
+
+## 仓库文件结构
+```
+{file_tree}
+```
 
 ## 讨论标题
 {title}
@@ -101,11 +136,11 @@ def main():
 
 ## 要求
 1. 请用简体中文回复
-2. 分析需求的技术可行性
-3. 搜索相关最佳实践和技术文档（使用 Tavily 搜索和 Obscura 浏览器）
+2. **先阅读相关代码文件**：使用 FileEditor 工具查看与讨论相关的源代码文件，理解现有实现
+3. 分析需求的技术可行性，基于实际代码给出判断
 4. 给出实现方案建议，包括：
-   - 涉及哪些文件/模块
-   - 大致的改动方向
+   - 涉及哪些文件/模块（给出具体文件路径）
+   - 大致的改动方向（引用现有代码结构）
    - 推荐的技术方案
    - 潜在风险和注意事项
 5. 如果需求不够明确，提出需要澄清的问题
@@ -161,10 +196,16 @@ conversation.run()
     output = result.stdout + "\n" + result.stderr
     print(output)
 
-    reply_body = f"## 技术方案建议\n\n基于讨论内容，以下是 AI 分析的方案建议：\n\n{output}\n\n---\n🤖 由 GLM-5.2 生成 | 使用 Tavily 搜索 + Obscura 浏览"
+    reply_body = f"## 技术方案建议\n\n基于讨论内容和仓库代码，以下是 AI 分析的方案建议：\n\n{output}\n\n---\n🤖 由 GLM-5.2 生成"
 
-    reply_discussion(token, discussion_node_id, reply_body)
-    print("Reply posted to discussion")
+    try:
+        result_gql = reply_discussion(token, discussion_node_id, reply_body)
+        if "errors" in result_gql:
+            print(f"GraphQL errors: {result_gql['errors']}")
+        else:
+            print("Reply posted to discussion")
+    except Exception as e:
+        print(f"Failed to post reply: {e}")
 
 
 if __name__ == "__main__":
