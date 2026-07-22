@@ -152,7 +152,13 @@ def main():
         f.write(prompt)
         prompt_file = f.name
 
-    agent_script = """import os, sys
+    agent_script = """import os, sys, io, re
+
+# Capture stdout to extract LLM response
+captured = io.StringIO()
+old_stdout = sys.stdout
+sys.stdout = captured
+
 from openhands.sdk import LLM, Agent, AgentContext, Conversation
 from openhands.sdk.tool import Tool
 from openhands.tools.file_editor import FileEditorTool
@@ -177,11 +183,47 @@ with open(os.environ["PROMPT_FILE"]) as f:
 
 conversation.send_message(prompt)
 conversation.run()
+
+sys.stdout = old_stdout
+raw = captured.getvalue()
+
+# Try to extract the last assistant response
+# Look for patterns like "Assistant:" or "assistant:" followed by content
+patterns = [
+    r'(?:Assistant|assistant|AI|Response|response)[:\\s]*\\n(.+)$',
+]
+response = ""
+for pat in patterns:
+    matches = re.findall(pat, raw, re.DOTALL | re.IGNORECASE)
+    if matches:
+        response = matches[-1].strip()
+        break
+
+if not response:
+    # Fallback: find last block of Chinese text
+    lines = raw.split('\\n')
+    chinese_lines = []
+    for line in lines:
+        if re.search(r'[\\u4e00-\\u9fff]', line) or (chinese_lines and line.strip()):
+            chinese_lines.append(line)
+        elif chinese_lines and not line.strip():
+            break
+    response = '\\n'.join(chinese_lines[-100:]) if chinese_lines else raw[-3000:]
+
+# Truncate to reasonable length
+if len(response) > 8000:
+    response = response[:8000] + "\\n\\n...(内容过长已截断)"
+
+with open(os.environ["RESPONSE_FILE"], 'w') as f:
+    f.write(response)
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(agent_script)
         script_file = f.name
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        response_file = f.name
 
     result = subprocess.run(
         ["uv", "run", "--no-project",
@@ -189,42 +231,18 @@ conversation.run()
          "--with", "openhands-tools",
          "python", script_file],
         capture_output=True, text=True,
-        env={**os.environ, "PROMPT_FILE": prompt_file},
+        env={**os.environ, "PROMPT_FILE": prompt_file, "RESPONSE_FILE": response_file},
         cwd=os.getcwd(),
     )
 
     if result.stderr:
         print(f"[stderr] {result.stderr[:500]}", file=sys.stderr)
 
-    # Parse stdout: extract LLM response, skip system prompt noise
-    raw_output = result.stdout
-    noise_markers = [
-        "System Prompt ──",
-        "System Prompt:",
-        "<SOUL>",
-        "<ROLE>",
-        "<MEMORY>",
-        "<EFFICIENCY>",
-        "<FILE_SYSTEM_GUIDELINES>",
-        "<CODE_QUALITY>",
-    ]
-
-    lines = raw_output.split("\n")
-    clean_lines = []
-    in_noise = False
-    for line in lines:
-        if any(marker in line for marker in noise_markers):
-            in_noise = True
-            continue
-        if in_noise:
-            if line.strip() == "" or line.startswith(" ") or line.startswith("*") or line.startswith("-"):
-                continue
-            in_noise = False
-        clean_lines.append(line)
-
-    llm_response = "\n".join(clean_lines).strip()
-    if not llm_response:
-        llm_response = raw_output.strip()[:2000] or "(LLM 未返回文本回复)"
+    try:
+        with open(response_file) as f:
+            llm_response = f.read().strip()
+    except Exception:
+        llm_response = "(LLM 未返回文本回复)"
 
     print(f"Response length: {len(llm_response)} chars")
 
