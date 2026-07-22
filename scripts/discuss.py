@@ -190,62 +190,47 @@ raw = captured.getvalue()
 # Write debug info to a separate file
 debug = []
 debug.append(f"=== Conversation dir: {[x for x in dir(conversation) if not x.startswith('__')]}")
-debug.append(f"=== Conversation __dict__: {conversation.__dict__}")
 
-# Try to find messages in conversation
-response = ""
-for attr in ['messages', '_messages', 'history', '_history', 'events', '_events',
-             'turns', '_turns', '_conversation', 'conversation', 'agent_messages']:
+# Try conversation.state and conversation._state
+for attr in ['state', '_state']:
     try:
         val = getattr(conversation, attr, None)
         if val is None:
             continue
         debug.append(f"--- conversation.{attr}: type={type(val).__name__}")
-        if isinstance(val, (list, tuple)) and len(val) > 0:
-            debug.append(f"    len={len(val)}, last type={type(val[-1]).__name__}")
-            debug.append(f"    last dir={[x for x in dir(val[-1]) if not x.startswith('__')]}")
-            debug.append(f"    last __dict__={getattr(val[-1], '__dict__', 'N/A')}")
-            # Try to extract text from last item
-            for msg_attr in ['content', 'text', 'message', 'response', 'output', 'data', 'body', 'reasoning']:
-                try:
-                    msg_val = getattr(val[-1], msg_attr, None)
-                    if msg_val and isinstance(msg_val, str) and len(msg_val) > 20:
-                        response = msg_val
-                        debug.append(f"    >>> FOUND via .{msg_attr}: {len(response)} chars")
-                        break
-                except:
-                    pass
-        elif isinstance(val, dict):
-            debug.append(f"    keys={list(val.keys())}")
+        debug.append(f"    dir={[x for x in dir(val) if not x.startswith('__')]}")
+        debug.append(f"    __dict__={getattr(val, '__dict__', 'N/A')}")
+        # Try common message container attributes
+        for sub in ['messages', 'history', 'events', 'turns', '_messages', '_history',
+                     'actions', 'observations', 'steps', '_steps']:
+            try:
+                sub_val = getattr(val, sub, None)
+                if sub_val is None:
+                    continue
+                debug.append(f"    .{sub}: type={type(sub_val).__name__}, len={len(sub_val) if hasattr(sub_val, '__len__') else 'N/A'}")
+                if isinstance(sub_val, (list, tuple)) and len(sub_val) > 0:
+                    last = sub_val[-1]
+                    debug.append(f"      last type={type(last).__name__}, __dict__={getattr(last, '__dict__', 'N/A')}")
+                    for msg_attr in ['content', 'text', 'message', 'response', 'output', 'data', 'body', 'reasoning', 'args']:
+                        try:
+                            msg_val = getattr(last, msg_attr, None)
+                            if msg_val and isinstance(msg_val, str) and len(msg_val) > 20:
+                                response = msg_val
+                                debug.append(f"      >>> FOUND via .{sub}[−1].{msg_attr}: {len(response)} chars")
+                                break
+                        except:
+                            pass
+            except:
+                pass
     except Exception as e:
         debug.append(f"    ERROR: {e}")
 
-# Try agent attributes
-if not response:
-    for attr in ['last_response', 'response', '_response', 'messages', '_messages',
-                 'history', '_history', 'context', '_context']:
-        try:
-            val = getattr(agent, attr, None)
-            if val is None:
-                continue
-            debug.append(f"--- agent.{attr}: type={type(val).__name__}")
-            if isinstance(val, str) and len(val) > 20:
-                response = val
-                debug.append(f"    >>> FOUND: {len(response)} chars")
-                break
-            elif isinstance(val, (list, tuple)) and len(val) > 0:
-                debug.append(f"    len={len(val)}, last type={type(val[-1]).__name__}")
-                for msg_attr in ['content', 'text', 'message', 'response', 'output']:
-                    try:
-                        msg_val = getattr(val[-1], msg_attr, None)
-                        if msg_val and isinstance(msg_val, str) and len(msg_val) > 20:
-                            response = msg_val
-                            debug.append(f"    >>> FOUND via .{msg_attr}: {len(response)} chars")
-                            break
-                    except:
-                        pass
-        except Exception as e:
-            debug.append(f"    ERROR: {e}")
+# Try conversation.conversation_stats
+try:
+    stats = conversation.conversation_stats
+    debug.append(f"--- conversation_stats: {stats}")
+except:
+    pass
 
 # Method 3: parse raw stdout - find content between last tool output and "Tokens:" line
 if not response:
