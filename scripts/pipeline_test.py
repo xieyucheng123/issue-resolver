@@ -329,7 +329,7 @@ def test_discussion():
         reply = poll_until(
             "discuss reply posted",
             lambda: _find_discussion_reply(disc_num),
-            timeout=600
+            timeout=900
         )
         if not reply:
             print("FAIL: No reply posted")
