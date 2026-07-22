@@ -1,7 +1,7 @@
 ---
 name: AI Issue Resolver
 description: Automatically resolve GitHub issues by creating PRs with fixes using GLM-5.2
-author: xieyucheng123
+author: link-seek
 
 branding:
     icon: wrench
@@ -43,7 +43,7 @@ runs:
         - name: Checkout issue-resolver plugin
           uses: actions/checkout@v4
           with:
-              repository: xieyucheng123/issue-resolver
+              repository: link-seek/issue-resolver
               ref: main
               path: issue-resolver-plugin
               token: ${{ inputs.github-token }}
