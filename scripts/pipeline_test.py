@@ -234,9 +234,9 @@ def _check_pr_merged(pr_num):
 
 
 def _check_deploy_success():
-    runs = get_recent_workflow_runs(5)
+    runs = get_recent_workflow_runs(20)
     for r in runs:
-        if r["conclusion"] == "success" and r["created_at"] > time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600)):
+        if r["conclusion"] == "success" and r["created_at"] > time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 900)):
             return True
     return False
 
