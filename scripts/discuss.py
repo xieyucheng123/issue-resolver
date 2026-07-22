@@ -152,7 +152,7 @@ def main():
         f.write(prompt)
         prompt_file = f.name
 
-    agent_script = """import os, sys, io, re, json
+    agent_script = """import os, sys, io, re, json, traceback
 
 # Capture stdout to extract LLM response
 captured = io.StringIO()
@@ -187,82 +187,110 @@ conversation.run()
 sys.stdout = old_stdout
 raw = captured.getvalue()
 
-# Debug: inspect conversation object
-debug_info = []
-debug_info.append(f"conversation type: {type(conversation)}")
-debug_info.append(f"conversation dir: {[x for x in dir(conversation) if not x.startswith('__')]}")
+# Write debug info to a separate file
+debug = []
+debug.append(f"=== Conversation dir: {[x for x in dir(conversation) if not x.startswith('__')]}")
+debug.append(f"=== Conversation __dict__: {conversation.__dict__}")
 
-# Try various ways to get the response
+# Try to find messages in conversation
 response = ""
-
-# Method 1: conversation.messages
-for attr in ['messages', '_messages', 'history', '_history', 'events', '_events', 'turns', '_turns']:
+for attr in ['messages', '_messages', 'history', '_history', 'events', '_events',
+             'turns', '_turns', '_conversation', 'conversation', 'agent_messages']:
     try:
-        val = getattr(conversation, attr)
-        if val:
-            debug_info.append(f"conversation.{attr} = {type(val)} len={len(val) if hasattr(val, '__len__') else 'N/A'}")
-            # Try to get last message
-            if isinstance(val, list) and len(val) > 0:
-                last = val[-1]
-                debug_info.append(f"  last item type: {type(last)}, dir: {[x for x in dir(last) if not x.startswith('_')]}")
-                for msg_attr in ['content', 'text', 'message', 'response', 'output', 'data']:
+        val = getattr(conversation, attr, None)
+        if val is None:
+            continue
+        debug.append(f"--- conversation.{attr}: type={type(val).__name__}")
+        if isinstance(val, (list, tuple)) and len(val) > 0:
+            debug.append(f"    len={len(val)}, last type={type(val[-1]).__name__}")
+            debug.append(f"    last dir={[x for x in dir(val[-1]) if not x.startswith('__')]}")
+            debug.append(f"    last __dict__={getattr(val[-1], '__dict__', 'N/A')}")
+            # Try to extract text from last item
+            for msg_attr in ['content', 'text', 'message', 'response', 'output', 'data', 'body', 'reasoning']:
+                try:
+                    msg_val = getattr(val[-1], msg_attr, None)
+                    if msg_val and isinstance(msg_val, str) and len(msg_val) > 20:
+                        response = msg_val
+                        debug.append(f"    >>> FOUND via .{msg_attr}: {len(response)} chars")
+                        break
+                except:
+                    pass
+        elif isinstance(val, dict):
+            debug.append(f"    keys={list(val.keys())}")
+    except Exception as e:
+        debug.append(f"    ERROR: {e}")
+
+# Try agent attributes
+if not response:
+    for attr in ['last_response', 'response', '_response', 'messages', '_messages',
+                 'history', '_history', 'context', '_context']:
+        try:
+            val = getattr(agent, attr, None)
+            if val is None:
+                continue
+            debug.append(f"--- agent.{attr}: type={type(val).__name__}")
+            if isinstance(val, str) and len(val) > 20:
+                response = val
+                debug.append(f"    >>> FOUND: {len(response)} chars")
+                break
+            elif isinstance(val, (list, tuple)) and len(val) > 0:
+                debug.append(f"    len={len(val)}, last type={type(val[-1]).__name__}")
+                for msg_attr in ['content', 'text', 'message', 'response', 'output']:
                     try:
-                        msg_val = getattr(last, msg_attr)
-                        if msg_val and isinstance(msg_val, str) and len(msg_val) > 10:
+                        msg_val = getattr(val[-1], msg_attr, None)
+                        if msg_val and isinstance(msg_val, str) and len(msg_val) > 20:
                             response = msg_val
-                            debug_info.append(f"  FOUND response via .{msg_attr}: {len(response)} chars")
+                            debug.append(f"    >>> FOUND via .{msg_attr}: {len(response)} chars")
                             break
                     except:
                         pass
-    except:
-        pass
+        except Exception as e:
+            debug.append(f"    ERROR: {e}")
 
-# Method 2: agent attributes
+# Method 3: parse raw stdout - find content between last tool output and "Tokens:" line
 if not response:
-    for attr in ['last_response', 'response', '_response', 'messages', '_messages']:
-        try:
-            val = getattr(agent, attr)
-            if val and isinstance(val, str) and len(val) > 10:
-                response = val
-                debug_info.append(f"FOUND response via agent.{attr}: {len(response)} chars")
-                break
-        except:
-            pass
-
-# Method 3: parse raw stdout for the response
-if not response:
-    # Look for the last substantial text block after all tool calls
-    # The LLM response typically comes after tool results
     lines = raw.split('\\n')
-    # Find lines that look like a response (not system prompt, not tool output)
-    response_lines = []
-    in_response = False
+    # Find "Tokens:" or "Finish with message:" marker (end of response)
+    end_idx = len(lines)
     for i, line in enumerate(lines):
-        # Skip system prompt markers
-        if any(m in line for m in ['System Prompt', '<SOUL>', '<ROLE>', '<MEMORY>', '<EFFICIENCY>']):
+        if 'Tokens:' in line or 'Finish with message:' in line:
+            end_idx = i
+            break
+
+    # Find the start of the actual response
+    # Look for the last occurrence of a pattern that indicates tool output ended
+    # Tool results typically end with patterns like "Summary:" or "Observation:" or file paths
+    start_idx = 0
+    for i in range(end_idx - 1, -1, -1):
+        line = lines[i].strip()
+        # Skip empty lines
+        if not line:
             continue
-        # Look for response indicators
-        if re.search(r'[\\u4e00-\\u9fff]{3,}', line) and not line.startswith('*') and not line.startswith(' '):
-            in_response = True
-        if in_response:
-            response_lines.append(line)
+        # If we hit a system prompt marker, stop
+        if any(m in line for m in ['System Prompt', '<SOUL>', '<ROLE>', '<MEMORY>', '<EFFICIENCY>',
+                                    '<FILE_SYSTEM', '<CODE_QUALITY>', '<EXTERNAL', '<ENVIRONMENT']):
+            start_idx = i + 1
+            break
+        # If we hit the user prompt (our discussion content), stop
+        if '你是一个技术架构师' in line:
+            start_idx = i + 1
+            break
 
-    if response_lines:
-        response = '\\n'.join(response_lines[-100:])
+    response = '\\n'.join(lines[start_idx:end_idx]).strip()
 
-# Fallback: use last 3000 chars of raw output
+# Fallback
 if not response:
-    response = raw[-3000:] if len(raw) > 3000 else raw
+    response = raw[-5000:] if len(raw) > 5000 else raw
 
 # Truncate
-if len(response) > 8000:
-    response = response[:8000] + "\\n\\n...(内容过长已截断)"
+if len(response) > 10000:
+    response = response[:10000] + "\\n\\n...(内容过长已截断)"
 
 with open(os.environ["RESPONSE_FILE"], 'w') as f:
     f.write(response)
 
-# Write debug info to stderr
-sys.stderr.write("\\n".join(debug_info) + "\\n")
+with open(os.environ["DEBUG_FILE"], 'w') as f:
+    f.write('\\n'.join(debug))
 """
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
@@ -272,18 +300,30 @@ sys.stderr.write("\\n".join(debug_info) + "\\n")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         response_file = f.name
 
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        debug_file = f.name
+
     result = subprocess.run(
         ["uv", "run", "--no-project",
          "--with", "openhands-sdk",
          "--with", "openhands-tools",
          "python", script_file],
         capture_output=True, text=True,
-        env={**os.environ, "PROMPT_FILE": prompt_file, "RESPONSE_FILE": response_file},
+        env={**os.environ, "PROMPT_FILE": prompt_file,
+             "RESPONSE_FILE": response_file, "DEBUG_FILE": debug_file},
         cwd=os.getcwd(),
     )
 
     if result.stderr:
-        print(f"[stderr] {result.stderr[:500]}", file=sys.stderr)
+        print(f"[stderr] {result.stderr[:2000]}", file=sys.stderr)
+
+    # Print debug info
+    try:
+        with open(debug_file) as f:
+            debug_content = f.read()
+        print(f"[debug] {debug_content[:3000]}")
+    except Exception:
+        pass
 
     try:
         with open(response_file) as f:
