@@ -7,7 +7,7 @@ Usage:
     python pipeline_test.py discussion  # discussion @oh → discuss job → reply
 
 Requires:
-    PAT_TOKEN env var — GitHub PAT for API access
+    GITHUB_TOKEN env var — GitHub PAT for API access
     CONSUMER_REPO env var — consumer repo in owner/name format
 """
 
@@ -21,11 +21,11 @@ import urllib.request
 import urllib.error
 
 
-TOKEN = os.environ.get("PAT_TOKEN", "")
+TOKEN = os.environ.get("GITHUB_TOKEN", "")
 CONSUMER_REPO = os.environ.get("CONSUMER_REPO", "")
 
 if not TOKEN:
-    print("PAT_TOKEN not set")
+    print("GITHUB_TOKEN not set")
     sys.exit(1)
 if not CONSUMER_REPO:
     print("CONSUMER_REPO not set (e.g. link-seek/enterprise-architecture-platform)")
