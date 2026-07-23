@@ -51,6 +51,19 @@ def get_nested(d: dict, path: str):
     return d
 
 
+def find_manifest(filename: str) -> Path | None:
+    """Locate a build manifest (Cargo.toml / package.json).
+
+    Searches the repo root first, then common monorepo subdirectories, so
+    repos whose backend lives under backend/ or frontend/ validate correctly.
+    """
+    candidates = [Path(filename), Path("backend", filename), Path("frontend", filename)]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def validate_config_fields(config: dict) -> list[str]:
     errors = []
     for field in get_required_fields_from_defaults():
@@ -66,10 +79,10 @@ def validate_test_command(config: dict) -> list[str]:
     errors = []
     test_cmd = get_nested(config, "test.command")
     if test_cmd:
-        if "cargo" in test_cmd and not Path("Cargo.toml").exists():
-            errors.append("test.command uses cargo but Cargo.toml not found at root")
-        if "npm" in test_cmd and not Path("package.json").exists():
-            errors.append("test.command uses npm but package.json not found at root")
+        if "cargo" in test_cmd and find_manifest("Cargo.toml") is None:
+            errors.append("test.command uses cargo but Cargo.toml not found at root, backend/, or frontend/")
+        if "npm" in test_cmd and find_manifest("package.json") is None:
+            errors.append("test.command uses npm but package.json not found at root, backend/, or frontend/")
     return errors
 
 
