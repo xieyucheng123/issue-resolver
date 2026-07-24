@@ -1,0 +1,60 @@
+name: Monthly Cleanup
+
+on:
+  workflow_call:
+    inputs:
+      trigger-label:
+        description: 'Label that triggers the resolve flow'
+        required: false
+        default: 'fix-me'
+        type: string
+    secrets:
+      APP_ID:
+        required: true
+      APP_PRIVATE_KEY:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  create-cleanup-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Create cleanup issue
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TRIGGER_LABEL: ${{ inputs.trigger-label }}
+        run: |
+          EXISTING=$(gh issue list -R "$GITHUB_REPOSITORY" \
+            --label "$TRIGGER_LABEL" --search "Monthly Cleanup" \
+            --state open --json number --jq 'length')
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "Cleanup issue already open, skipping"
+            exit 0
+          fi
+
+          gh issue create \
+            --title "Monthly Cleanup: 修复积累的 minor 问题" \
+            --label "$TRIGGER_LABEL" \
+            --body "$(cat <<'EOF'
+          @oh 请执行月度代码清理：
+
+          1. 运行 `cargo clippy --workspace`，修复所有 warning
+          2. 运行 `npx eslint .`，修复所有 warning
+          3. 检查前端 async 调用是否都有 `.catch()` 错误处理
+          4. 检查后端 check-then-act 模式是否有竞态（应靠 DB constraint 兜底）
+          5. 删除确认无用的死代码
+
+          只做安全的重构，不改功能逻辑。
+          EOF
+          )"
